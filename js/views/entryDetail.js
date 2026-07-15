@@ -1,7 +1,7 @@
-// Entry detail — §8.3: full quote, source, topics, reflection, photo,
+// Entry detail — §8.3: full quote, source, topics, reflection,
 // star / edit / delete.
-import { getEntryFull, getImage, toggleStar, deleteEntry } from '../store.js';
-import { h, icon, fmtDate, toast, topbar, confirmDialog, openImageViewer } from '../ui.js';
+import { getEntryFull, toggleStar, deleteEntry } from '../store.js';
+import { h, icon, fmtDate, toast, topbar, confirmDialog } from '../ui.js';
 import { libraryState } from './library.js';
 
 export async function renderEntryDetail(container, entryId) {
@@ -51,24 +51,6 @@ export async function renderEntryDetail(container, entryId) {
   }
   if (entry.page) sourceBits.push(`${sourceBits.length ? ' · ' : ''}p. ${entry.page}`);
 
-  const photoSection = h('div', {});
-  if (entry.image_ref) {
-    getImage(entry.image_ref).then((record) => {
-      if (!record) return;
-      const url = URL.createObjectURL(record.blob);
-      const img = h('img', { src: url, alt: 'Source photo — tap to enlarge' });
-      img.addEventListener('load', () => URL.revokeObjectURL(url));
-      photoSection.append(
-        h(
-          'div',
-          { class: 'detail-section detail-photo' },
-          h('h3', {}, 'Source photo'),
-          h('div', { style: 'cursor:zoom-in', onclick: () => openImageViewer(record.blob) }, img)
-        )
-      );
-    });
-  }
-
   container.append(
     topbar({
       title: entry.book ? entry.book.name : 'Entry',
@@ -111,7 +93,6 @@ export async function renderEntryDetail(container, entryId) {
           h('div', { class: 'reflectiontext' }, entry.reflection)
         )
       : null,
-    photoSection,
     h(
       'div',
       { class: 'detail-dates' },

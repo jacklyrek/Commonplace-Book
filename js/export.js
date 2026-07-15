@@ -1,8 +1,7 @@
-// Backup: JSON export/import (full, including photos as base64) and
+// Backup: JSON export/import (text records; photos are never stored) and
 // Markdown export (portable, human-readable) — §5.12, §7.
 import { dbPromise, now, cleanText } from './db.js';
 import { listEntriesFull } from './store.js';
-import { blobToDataURL, dataURLToBlob } from './images.js';
 import { fmtDate } from './ui.js';
 
 const EXPORT_VERSION = 1;
@@ -24,22 +23,11 @@ const stamp = () => new Date().toISOString().slice(0, 10);
 
 export async function exportJSON() {
   const db = await dbPromise;
-  const [entries, tags, entryTags, images] = await Promise.all([
+  const [entries, tags, entryTags] = await Promise.all([
     db.getAll('entries'),
     db.getAll('tags'),
     db.getAll('entry_tags'),
-    db.getAll('images'),
   ]);
-  const imagesOut = [];
-  for (const img of images) {
-    imagesOut.push({
-      id: img.id,
-      type: img.type,
-      created_at: img.created_at,
-      updated_at: img.updated_at,
-      data: await blobToDataURL(img.blob),
-    });
-  }
   const payload = {
     app: 'commonplace-book',
     version: EXPORT_VERSION,
@@ -47,13 +35,12 @@ export async function exportJSON() {
     entries,
     tags,
     entry_tags: entryTags,
-    images: imagesOut,
   };
   download(
     new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
     `commonplace-backup-${stamp()}.json`
   );
-  return { entries: entries.length, images: images.length };
+  return { entries: entries.length };
 }
 
 // Merges by id with last-write-wins on updated_at (same rule Phase 2 sync will use).
@@ -93,23 +80,7 @@ export async function importJSON(file) {
     }))
   );
   await mergeStore('entry_tags', payload.entry_tags);
-
-  for (const img of payload.images || []) {
-    if (!img?.id || !img.data) continue;
-    const existing = await db.get('images', img.id);
-    if (existing) {
-      result.skipped++;
-      continue;
-    }
-    await db.put('images', {
-      id: img.id,
-      blob: await dataURLToBlob(img.data),
-      type: img.type,
-      created_at: img.created_at,
-      updated_at: img.updated_at,
-    });
-    result.added++;
-  }
+  // Older backups may contain an `images` array — photos are no longer stored, so it's ignored.
 
   return result;
 }

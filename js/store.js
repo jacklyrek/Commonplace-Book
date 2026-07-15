@@ -1,5 +1,6 @@
 // CRUD operations over the IndexedDB stores (§4 data model).
 import { dbPromise, uid, now, cleanText } from './db.js';
+import { scheduleSync } from './sync.js';
 
 /* ---------------- entries ---------------- */
 
@@ -11,12 +12,12 @@ export async function saveEntry(entry) {
     quote: entry.quote,
     reflection: cleanText(entry.reflection),
     page: cleanText(entry.page),
-    image_ref: entry.image_ref ?? null,
     starred: !!entry.starred,
     created_at: entry.created_at || now(),
     updated_at: now(),
   };
   await db.put('entries', record);
+  scheduleSync();
   return record;
 }
 
@@ -35,19 +36,34 @@ export async function toggleStar(id) {
   entry.starred = !entry.starred;
   entry.updated_at = now();
   await db.put('entries', entry);
+  scheduleSync();
   return entry;
 }
 
-// Deletes the entry plus its entry_tags rows and attached image.
+// A deleted record's id goes into the sync_deletes outbox so the deletion can
+// be pushed to the backend as a tombstone (LWW-safe across devices).
+function tombstone(tx, storeName, recordId) {
+  tx.objectStore('sync_deletes').put({
+    id: `${storeName}:${recordId}`,
+    store: storeName,
+    record_id: recordId,
+    deleted_at: now(),
+  });
+}
+
+// Deletes the entry plus its entry_tags rows (with tombstones for sync).
 export async function deleteEntry(id) {
   const db = await dbPromise;
-  const entry = await db.get('entries', id);
-  const tx = db.transaction(['entries', 'entry_tags', 'images'], 'readwrite');
+  const tx = db.transaction(['entries', 'entry_tags', 'sync_deletes'], 'readwrite');
   const links = await tx.objectStore('entry_tags').index('entry_id').getAllKeys(id);
-  for (const key of links) tx.objectStore('entry_tags').delete(key);
-  if (entry?.image_ref) tx.objectStore('images').delete(entry.image_ref);
+  for (const key of links) {
+    tx.objectStore('entry_tags').delete(key);
+    tombstone(tx, 'entry_tags', key);
+  }
   tx.objectStore('entries').delete(id);
+  tombstone(tx, 'entries', id);
   await tx.done;
+  scheduleSync();
 }
 
 export async function randomEntry() {
@@ -82,6 +98,7 @@ export async function ensureTag(name, kind, author = null) {
       existing.author = author.trim();
       existing.updated_at = now();
       await db.put('tags', existing);
+      scheduleSync();
     }
     return existing;
   }
@@ -94,6 +111,7 @@ export async function ensureTag(name, kind, author = null) {
     updated_at: now(),
   };
   await db.put('tags', tag);
+  scheduleSync();
   return tag;
 }
 
@@ -111,15 +129,18 @@ export async function tagUsageCounts() {
 // Replaces the entry's tag set with exactly tagIds (diff-based, preserves timestamps).
 export async function setEntryTags(entryId, tagIds) {
   const db = await dbPromise;
-  const tx = db.transaction('entry_tags', 'readwrite');
-  const current = await tx.store.index('entry_id').getAll(entryId);
+  const tx = db.transaction(['entry_tags', 'sync_deletes'], 'readwrite');
+  const store = tx.objectStore('entry_tags');
+  const current = await store.index('entry_id').getAll(entryId);
   const wanted = new Set(tagIds);
   for (const link of current) {
-    if (!wanted.has(link.tag_id)) tx.store.delete(link.id);
-    else wanted.delete(link.tag_id);
+    if (!wanted.has(link.tag_id)) {
+      store.delete(link.id);
+      tombstone(tx, 'entry_tags', link.id);
+    } else wanted.delete(link.tag_id);
   }
   for (const tagId of wanted) {
-    tx.store.put({
+    store.put({
       id: `${entryId}::${tagId}`,
       entry_id: entryId,
       tag_id: tagId,
@@ -128,6 +149,7 @@ export async function setEntryTags(entryId, tagIds) {
     });
   }
   await tx.done;
+  scheduleSync();
 }
 
 export async function tagsForEntry(entryId) {
@@ -184,21 +206,3 @@ export async function getEntryFull(id) {
   };
 }
 
-/* ---------------- images ---------------- */
-
-export async function putImage(blob) {
-  const db = await dbPromise;
-  const record = { id: uid(), blob, type: blob.type, created_at: now(), updated_at: now() };
-  await db.put('images', record);
-  return record.id;
-}
-
-export async function getImage(id) {
-  if (!id) return null;
-  return (await dbPromise).get('images', id);
-}
-
-export async function deleteImage(id) {
-  if (!id) return;
-  return (await dbPromise).delete('images', id);
-}

@@ -1,8 +1,248 @@
-// Settings — §8.5: theme, export/import, storage persistence, sync placeholder.
-import { h, toast, topbar, confirmDialog } from '../ui.js';
+// Settings — §8.5: theme, export/import, storage persistence, cloud sync.
+import { h, toast, topbar, confirmDialog, fmtDate } from '../ui.js';
 import { exportJSON, exportMarkdown, importJSON } from '../export.js';
+import {
+  getConfig,
+  setConfig,
+  clearConfig,
+  getSession,
+  signOut,
+  requestCode,
+  verifyCode,
+  syncNow,
+  getLastSync,
+} from '../sync.js';
 
 const THEME_KEY = 'cb-theme';
+
+/* ---------- cloud sync section (Phase 2) ---------- */
+
+function syncSection() {
+  const group = h('div', { class: 'settings-group' });
+  let pendingEmail = null; // an email a code has been sent to, awaiting entry
+
+  const render = async () => {
+    const config = getConfig();
+    const session = getSession();
+    group.replaceChildren(h('h2', {}, 'Sync'));
+
+    if (!config) {
+      // Step 1: point the app at your Supabase project.
+      const urlInput = h('input', {
+        class: 'input',
+        type: 'url',
+        placeholder: 'https://your-project.supabase.co',
+        autocomplete: 'off',
+        autocapitalize: 'none',
+      });
+      const keyInput = h('input', {
+        class: 'input',
+        type: 'text',
+        placeholder: 'anon public key',
+        autocomplete: 'off',
+        autocapitalize: 'none',
+        style: 'margin-top:8px',
+      });
+      group.append(
+        h(
+          'div',
+          { class: 'settings-row' },
+          h(
+            'span',
+            { class: 'grow' },
+            'Connect your Supabase project',
+            h(
+              'span',
+              { class: 'sub' },
+              'One-time setup — see README + supabase-schema.sql. Everything still works offline.'
+            ),
+            urlInput,
+            keyInput,
+            h(
+              'button',
+              {
+                class: 'btn primary',
+                style: 'margin-top:10px',
+                onclick: () => {
+                  if (!/^https?:\/\/.+/.test(urlInput.value.trim())) {
+                    return toast('Enter the project URL (https://…).');
+                  }
+                  if (!keyInput.value.trim()) return toast('Paste the anon public key.');
+                  setConfig(urlInput.value, keyInput.value);
+                  toast('Project connected — now sign in.');
+                  render();
+                },
+              },
+              'Save'
+            )
+          )
+        )
+      );
+      return;
+    }
+
+    if (!session) {
+      // Step 2: sign in with a one-time email code.
+      const signInRow = h('span', { class: 'grow' });
+      if (!pendingEmail) {
+        const emailInput = h('input', {
+          class: 'input',
+          type: 'email',
+          placeholder: 'you@example.com',
+          autocomplete: 'email',
+          autocapitalize: 'none',
+        });
+        signInRow.append(
+          'Sign in to sync',
+          h('span', { class: 'sub' }, `Project: ${config.url.replace(/^https?:\/\//, '')}`),
+          emailInput,
+          h(
+            'button',
+            {
+              class: 'btn primary',
+              style: 'margin-top:10px',
+              onclick: async (e) => {
+                const email = emailInput.value.trim();
+                if (!/.+@.+\..+/.test(email)) return toast('Enter your email address.');
+                e.currentTarget.disabled = true;
+                try {
+                  await requestCode(email);
+                  pendingEmail = email;
+                  toast('Code sent — check your email.');
+                  render();
+                } catch (err) {
+                  console.error(err);
+                  toast(err.message || 'Could not send the code.', 3500);
+                  e.currentTarget.disabled = false;
+                }
+              },
+            },
+            'Send code'
+          )
+        );
+      } else {
+        const codeInput = h('input', {
+          class: 'input',
+          type: 'text',
+          inputmode: 'numeric',
+          placeholder: '6-digit code',
+          autocomplete: 'one-time-code',
+        });
+        signInRow.append(
+          `Enter the code sent to ${pendingEmail}`,
+          h('span', { class: 'sub' }, 'It may take a minute to arrive.'),
+          codeInput,
+          h(
+            'div',
+            { style: 'display:flex;gap:8px;margin-top:10px' },
+            h(
+              'button',
+              {
+                class: 'btn primary',
+                onclick: async (e) => {
+                  if (!codeInput.value.trim()) return toast('Enter the code from the email.');
+                  e.currentTarget.disabled = true;
+                  try {
+                    await verifyCode(pendingEmail, codeInput.value);
+                    pendingEmail = null;
+                    toast('Signed in — syncing…');
+                    render();
+                    syncNow().catch((err) => console.warn('Sync failed:', err));
+                  } catch (err) {
+                    console.error(err);
+                    toast(err.message || 'Could not verify the code.', 3500);
+                    e.currentTarget.disabled = false;
+                  }
+                },
+              },
+              'Verify'
+            ),
+            h(
+              'button',
+              {
+                class: 'btn',
+                onclick: () => {
+                  pendingEmail = null;
+                  render();
+                },
+              },
+              'Change email'
+            )
+          )
+        );
+      }
+      group.append(
+        h('div', { class: 'settings-row' }, signInRow),
+        h(
+          'button',
+          {
+            class: 'settings-row',
+            onclick: async () => {
+              if (await confirmDialog('Disconnect this Supabase project?', { confirmLabel: 'Disconnect' })) {
+                clearConfig();
+                render();
+              }
+            },
+          },
+          h('span', { class: 'grow' }, 'Disconnect project')
+        )
+      );
+      return;
+    }
+
+    // Step 3: signed in — status + actions.
+    const statusSub = h('span', { class: 'sub' }, 'Checking…');
+    getLastSync().then((t) => {
+      statusSub.textContent = t
+        ? `Last synced ${fmtDate(t)} ${new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+        : 'Not synced yet.';
+    });
+
+    group.append(
+      h(
+        'div',
+        { class: 'settings-row' },
+        h('span', { class: 'grow' }, session.email || 'Signed in', statusSub)
+      ),
+      h(
+        'button',
+        {
+          class: 'settings-row',
+          onclick: async (e) => {
+            const row = e.currentTarget;
+            row.disabled = true;
+            try {
+              const r = await syncNow();
+              toast(r.skipped ? 'Sync is not set up.' : `Synced — ${r.pushed} pushed, ${r.pulled} pulled.`);
+            } catch (err) {
+              console.error(err);
+              toast(err.message || 'Sync failed — try again when online.', 3500);
+            } finally {
+              row.disabled = false;
+              render();
+            }
+          },
+        },
+        h('span', { class: 'grow' }, 'Sync now', h('span', { class: 'sub' }, 'Also runs automatically after changes.'))
+      ),
+      h(
+        'button',
+        {
+          class: 'settings-row',
+          onclick: () => {
+            signOut();
+            toast('Signed out — data stays on this device.');
+            render();
+          },
+        },
+        h('span', { class: 'grow' }, 'Sign out')
+      )
+    );
+  };
+
+  render();
+  return group;
+}
 
 function applyTheme(value) {
   if (value === 'light' || value === 'dark') {
@@ -105,14 +345,14 @@ export async function renderSettings(container) {
           class: 'settings-row',
           onclick: async () => {
             const r = await exportJSON();
-            toast(`Exported ${r.entries} entries (${r.images} photos).`);
+            toast(`Exported ${r.entries} ${r.entries === 1 ? 'entry' : 'entries'}.`);
           },
         },
         h(
           'span',
           { class: 'grow' },
           'Export JSON',
-          h('span', { class: 'sub' }, 'Full backup — entries, tags, and photos. Re-importable.')
+          h('span', { class: 'sub' }, 'Full backup — entries, books, and tags. Re-importable.')
         )
       ),
       h(
@@ -169,21 +409,7 @@ export async function renderSettings(container) {
       )
     ),
 
-    h(
-      'div',
-      { class: 'settings-group' },
-      h('h2', {}, 'Sync'),
-      h(
-        'div',
-        { class: 'settings-row' },
-        h(
-          'span',
-          { class: 'grow' },
-          'Cloud sync',
-          h('span', { class: 'sub' }, 'Coming in Phase 2 — data is already sync-ready (stable ids + timestamps).')
-        )
-      )
-    ),
+    syncSection(),
 
     h(
       'div',

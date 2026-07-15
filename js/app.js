@@ -5,6 +5,7 @@ import { renderEntryDetail } from './views/entryDetail.js';
 import { renderBrowse } from './views/browse.js';
 import { renderSettings } from './views/settings.js';
 import { icon } from './ui.js';
+import { initAutoSync } from './sync.js';
 
 const ROUTES = [
   { pattern: /^$/, view: renderLibrary, tab: 'library' },
@@ -45,9 +46,16 @@ function initTabIcons() {
 }
 
 window.addEventListener('hashchange', render);
-
 initTabIcons();
 render();
+initAutoSync();
+
+// A background pull brought remote changes — refresh list views so they show up.
+window.addEventListener('cb-sync', () => {
+  const path = location.hash.replace(/^#\/?/, '');
+  const route = ROUTES.find((r) => r.pattern.test(path)) || ROUTES[0];
+  if (route.tab === 'library' || route.tab === 'browse') render();
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

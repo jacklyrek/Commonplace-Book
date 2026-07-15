@@ -1,4 +1,5 @@
-// Image helpers: downscale/compress before storing (§9), base64 for JSON backup.
+// Image helpers. Photos are never stored — they only pass through
+// downscale → crop → OCR, then are discarded.
 
 function loadImageEl(url) {
   return new Promise((resolve, reject) => {
@@ -25,17 +26,4 @@ export async function downscaleImage(blob, maxDim = 2000, quality = 0.85) {
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-export function blobToDataURL(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
-export async function dataURLToBlob(dataURL) {
-  return (await fetch(dataURL)).blob();
 }

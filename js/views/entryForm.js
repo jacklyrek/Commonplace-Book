@@ -1,14 +1,5 @@
 // Add / Edit entry — §8.2, including the photo → crop → OCR → edit flow (§6).
-import {
-  getEntryFull,
-  saveEntry,
-  setEntryTags,
-  ensureTag,
-  listTags,
-  putImage,
-  getImage,
-  deleteImage,
-} from '../store.js';
+import { getEntryFull, saveEntry, setEntryTags, ensureTag, listTags } from '../store.js';
 import { h, icon, toast, topbar, showProgress } from '../ui.js';
 import { downscaleImage } from '../images.js';
 import { openCropper } from '../crop.js';
@@ -33,8 +24,6 @@ export async function renderEntryForm(container, entryId = null) {
     bookName: existing?.book?.name || '',
     bookAuthor: existing?.book?.author || '',
     topics: existing ? existing.topics.map((t) => t.name) : [],
-    imageBlob: null, // set when a new photo is captured this session
-    removeImage: false, // user removed the existing photo
   };
 
   /* ---------- quote ---------- */
@@ -54,46 +43,7 @@ export async function renderEntryForm(container, entryId = null) {
     el.style.height = `${Math.min(el.scrollHeight + 2, 420)}px`;
   }
 
-  /* ---------- photo + OCR ---------- */
-
-  const photoArea = h('div', { class: 'photorow' });
-
-  async function currentPhotoBlob() {
-    if (state.imageBlob) return state.imageBlob;
-    if (existing?.image_ref && !state.removeImage) {
-      return (await getImage(existing.image_ref))?.blob || null;
-    }
-    return null;
-  }
-
-  async function renderPhoto() {
-    const blob = await currentPhotoBlob();
-    photoArea.replaceChildren();
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const img = h('img', { src: url, alt: 'Attached photo' });
-    img.addEventListener('load', () => URL.revokeObjectURL(url));
-    photoArea.append(
-      h(
-        'div',
-        { class: 'photothumb' },
-        img,
-        h(
-          'button',
-          {
-            class: 'removephoto',
-            'aria-label': 'Remove photo',
-            onclick: () => {
-              state.imageBlob = null;
-              state.removeImage = true;
-              renderPhoto();
-            },
-          },
-          icon('x')
-        )
-      )
-    );
-  }
+  /* ---------- photo → crop → OCR (photo is discarded after extraction) ---------- */
 
   async function handlePhoto(file) {
     if (!file) return;
@@ -128,18 +78,13 @@ export async function renderEntryForm(container, entryId = null) {
     if (cancelled) return;
     progress.close();
 
-    // Attach the (downscaled) original so it can be re-read later (§6 step 5).
-    state.imageBlob = photo;
-    state.removeImage = false;
-    renderPhoto();
-
     if (text) {
       state.quote = state.quote.trim() ? `${state.quote.trim()}\n\n${text}` : text;
       quoteBox.value = state.quote;
       autogrow(quoteBox);
-      toast('Text recognized — review and fix any slips.');
+      toast('Text extracted — edit it below.');
     } else {
-      toast('No text found in that photo — it’s attached anyway.');
+      toast('No text found in that crop — try a tighter, straighter shot.');
     }
   }
 
@@ -343,22 +288,11 @@ export async function renderEntryForm(container, entryId = null) {
     }
     saving = true;
     try {
-      // Photo bookkeeping: replace/remove the stored image as needed.
-      let imageRef = existing?.image_ref ?? null;
-      if (state.imageBlob) {
-        if (imageRef) await deleteImage(imageRef);
-        imageRef = await putImage(state.imageBlob);
-      } else if (state.removeImage && imageRef) {
-        await deleteImage(imageRef);
-        imageRef = null;
-      }
-
       const entry = await saveEntry({
         ...(existing || {}),
         quote: state.quote.trim(),
         reflection: state.reflection.trim() || null,
         page: state.page.trim() || null,
-        image_ref: imageRef,
         starred: state.starred,
       });
 
@@ -407,7 +341,6 @@ export async function renderEntryForm(container, entryId = null) {
       cameraInput,
       libraryInput
     ),
-    h('div', { class: 'field' }, photoArea),
     h(
       'div',
       { class: 'field' },
@@ -439,7 +372,6 @@ export async function renderEntryForm(container, entryId = null) {
   );
 
   autogrow(quoteBox);
-  renderPhoto();
   renderBookChips();
   renderTopicChips();
 }

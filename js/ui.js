@@ -173,23 +173,6 @@ export function showProgress(label, { onCancel } = {}) {
   };
 }
 
-/* ---------------- fullscreen image viewer ---------------- */
-
-export function openImageViewer(blob) {
-  const url = URL.createObjectURL(blob);
-  const close = () => {
-    URL.revokeObjectURL(url);
-    viewer.remove();
-  };
-  const viewer = h(
-    'div',
-    { class: 'imageviewer', onclick: close },
-    h('img', { src: url, alt: 'Source photo' }),
-    h('button', { class: 'closeviewer', 'aria-label': 'Close' }, icon('x'))
-  );
-  document.getElementById('overlays').append(viewer);
-}
-
 /* ---------------- shared topbar ---------------- */
 
 export function topbar({ title, back = false, actions = [] }) {

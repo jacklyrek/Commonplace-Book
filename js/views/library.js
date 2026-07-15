@@ -103,12 +103,7 @@ function entryCard(entry, onStarChange) {
     h(
       'div',
       { class: 'cardfoot' },
-      h(
-        'span',
-        {},
-        fmtDate(entry.created_at),
-        entry.image_ref ? h('span', { class: 'hasphoto' }, ' ', icon('image')) : null
-      ),
+      h('span', {}, fmtDate(entry.created_at)),
       starBtn
     )
   );

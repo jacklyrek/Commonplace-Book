@@ -12,7 +12,7 @@ export function cleanText(value) {
   return !trimmed || trimmed === 'null' || trimmed === 'undefined' ? null : value;
 }
 
-export const dbPromise = openDB('commonplace-book', 2, {
+export const dbPromise = openDB('commonplace-book', 3, {
   async upgrade(db, oldVersion, newVersion, tx) {
     if (oldVersion < 1) {
       const entries = db.createObjectStore('entries', { keyPath: 'id' });
@@ -27,7 +27,6 @@ export const dbPromise = openDB('commonplace-book', 2, {
       entryTags.createIndex('entry_id', 'entry_id');
       entryTags.createIndex('tag_id', 'tag_id');
 
-      // Photos stay local-only in Phase 1; referenced from entries.image_ref.
       db.createObjectStore('images', { keyPath: 'id' });
     }
 
@@ -42,6 +41,27 @@ export const dbPromise = openDB('commonplace-book', 2, {
           await cursor.update({ ...entry, reflection, page });
         }
         cursor = await cursor.continue();
+      }
+    }
+
+    if (oldVersion < 3) {
+      // v3: sync bookkeeping — key/value metadata (last sync watermark) and a
+      // tombstone outbox so deletions reach the backend (§7, Phase 2).
+      db.createObjectStore('meta', { keyPath: 'key' });
+      db.createObjectStore('sync_deletes', { keyPath: 'id' });
+
+      // Photos are no longer stored past OCR: drop old blobs and refs.
+      if (oldVersion >= 1) {
+        tx.objectStore('images').clear();
+        let cursor = await tx.objectStore('entries').openCursor();
+        while (cursor) {
+          if (cursor.value.image_ref !== undefined) {
+            const entry = { ...cursor.value };
+            delete entry.image_ref;
+            await cursor.update(entry);
+          }
+          cursor = await cursor.continue();
+        }
       }
     }
   },
