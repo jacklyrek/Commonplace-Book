@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Commonplace Book</title>
+
+  <meta name="theme-color" content="#f6f3ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#191713" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="A personal commonplace book: collect, tag, and rediscover passages from books.">
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Commonplace">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="vendor/cropperjs/cropper.min.css">
+  <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Apply saved theme before first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('cb-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <main id="app" aria-live="polite"></main>
+
+  <nav id="tabbar" aria-label="Main navigation">
+    <a href="#/" data-route="library"><span class="tab-icon" data-icon="book"></span>Library</a>
+    <a href="#/browse" data-route="browse"><span class="tab-icon" data-icon="tag"></span>Browse</a>
+    <a href="#/settings" data-route="settings"><span class="tab-icon" data-icon="sliders"></span>Settings</a>
+  </nav>
+
+  <div id="overlays"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
