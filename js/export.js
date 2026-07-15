@@ -1,6 +1,6 @@
 // Backup: JSON export/import (full, including photos as base64) and
 // Markdown export (portable, human-readable) — §5.12, §7.
-import { dbPromise, now } from './db.js';
+import { dbPromise, now, cleanText } from './db.js';
 import { listEntriesFull } from './store.js';
 import { blobToDataURL, dataURLToBlob } from './images.js';
 import { fmtDate } from './ui.js';
@@ -83,7 +83,15 @@ export async function importJSON(file) {
   };
 
   await mergeStore('tags', payload.tags);
-  await mergeStore('entries', payload.entries);
+  // Backups from older builds may carry the string "null" for empty fields.
+  await mergeStore(
+    'entries',
+    (payload.entries || []).map((e) => ({
+      ...e,
+      reflection: cleanText(e.reflection),
+      page: cleanText(e.page),
+    }))
+  );
   await mergeStore('entry_tags', payload.entry_tags);
 
   for (const img of payload.images || []) {

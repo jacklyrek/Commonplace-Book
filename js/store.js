@@ -1,5 +1,5 @@
 // CRUD operations over the IndexedDB stores (§4 data model).
-import { dbPromise, uid, now } from './db.js';
+import { dbPromise, uid, now, cleanText } from './db.js';
 
 /* ---------------- entries ---------------- */
 
@@ -9,8 +9,8 @@ export async function saveEntry(entry) {
   const record = {
     id: entry.id || uid(),
     quote: entry.quote,
-    reflection: entry.reflection ?? null,
-    page: entry.page ?? null,
+    reflection: cleanText(entry.reflection),
+    page: cleanText(entry.page),
     image_ref: entry.image_ref ?? null,
     starred: !!entry.starred,
     created_at: entry.created_at || now(),
