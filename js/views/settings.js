@@ -411,20 +411,33 @@ export async function renderSettings(container) {
 
     syncSection(),
 
+    aboutSection()
+  );
+}
+
+// Shows which build this device is actually running (the service worker's
+// cache name), so a stale deploy is diagnosable at a glance.
+function aboutSection() {
+  const versionSub = h('span', { class: 'sub' }, 'Local-first · photos never stored.');
+  if (window.caches) {
+    caches
+      .keys()
+      .then((keys) => {
+        const cache = keys.find((k) => k.startsWith('commonplace-'));
+        if (cache) {
+          versionSub.textContent = `Version ${cache.replace('commonplace-', '')} · local-first · photos never stored.`;
+        }
+      })
+      .catch(() => {});
+  }
+  return h(
+    'div',
+    { class: 'settings-group' },
+    h('h2', {}, 'About'),
     h(
       'div',
-      { class: 'settings-group' },
-      h('h2', {}, 'About'),
-      h(
-        'div',
-        { class: 'settings-row' },
-        h(
-          'span',
-          { class: 'grow' },
-          'Commonplace Book',
-          h('span', { class: 'sub' }, 'Phase 1 · local-only · everything stays on this device.')
-        )
-      )
+      { class: 'settings-row' },
+      h('span', { class: 'grow' }, 'Commonplace Book', versionSub)
     )
   );
 }

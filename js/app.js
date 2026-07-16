@@ -4,7 +4,7 @@ import { renderEntryForm } from './views/entryForm.js';
 import { renderEntryDetail } from './views/entryDetail.js';
 import { renderBrowse } from './views/browse.js';
 import { renderSettings } from './views/settings.js';
-import { icon } from './ui.js';
+import { icon, toast } from './ui.js';
 import { initAutoSync } from './sync.js';
 
 const ROUTES = [
@@ -58,6 +58,13 @@ window.addEventListener('cb-sync', () => {
 });
 
 if ('serviceWorker' in navigator) {
+  // A new service worker taking over means a new app version just activated —
+  // tell the user so deploys are visible (skip the very first install).
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) toast('App updated — reload to use the newest version.', 3500);
+    hadController = true;
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch((err) => {
       console.warn('Service worker registration failed:', err);

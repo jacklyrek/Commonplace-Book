@@ -1,7 +1,7 @@
 // Service worker: precaches the app shell AND all OCR/crop assets so the app —
 // including photo→OCR capture — works fully offline (§9). Cache-first for all
 // same-origin GETs. Bump VERSION whenever any precached file changes.
-const VERSION = 'cb-v5';
+const VERSION = 'cb-v6';
 const CACHE = `commonplace-${VERSION}`;
 
 const ASSETS = [
