@@ -1,6 +1,21 @@
 // CRUD operations over the IndexedDB stores (§4 data model).
-import { dbPromise, uid, now, cleanText } from './db.js';
+import { dbPromise, uid, now, cleanText, markDirty } from './db.js';
 import { scheduleSync } from './sync.js';
+
+/* ---------------- sync outboxes ---------------- */
+
+// A deleted record's id goes into the sync_deletes outbox so the deletion can
+// be pushed to the backend as a tombstone (LWW-safe across devices). Any
+// pending upsert is dropped — the record no longer exists to push.
+function tombstone(tx, storeName, recordId) {
+  tx.objectStore('sync_deletes').put({
+    id: `${storeName}:${recordId}`,
+    store: storeName,
+    record_id: recordId,
+    deleted_at: now(),
+  });
+  tx.objectStore('sync_dirty').delete(`${storeName}:${recordId}`);
+}
 
 /* ---------------- entries ---------------- */
 
@@ -16,7 +31,10 @@ export async function saveEntry(entry) {
     created_at: entry.created_at || now(),
     updated_at: now(),
   };
-  await db.put('entries', record);
+  const tx = db.transaction(['entries', 'sync_dirty'], 'readwrite');
+  tx.objectStore('entries').put(record);
+  markDirty(tx, 'entries', record.id);
+  await tx.done;
   scheduleSync();
   return record;
 }
@@ -35,26 +53,18 @@ export async function toggleStar(id) {
   if (!entry) return null;
   entry.starred = !entry.starred;
   entry.updated_at = now();
-  await db.put('entries', entry);
+  const tx = db.transaction(['entries', 'sync_dirty'], 'readwrite');
+  tx.objectStore('entries').put(entry);
+  markDirty(tx, 'entries', id);
+  await tx.done;
   scheduleSync();
   return entry;
-}
-
-// A deleted record's id goes into the sync_deletes outbox so the deletion can
-// be pushed to the backend as a tombstone (LWW-safe across devices).
-function tombstone(tx, storeName, recordId) {
-  tx.objectStore('sync_deletes').put({
-    id: `${storeName}:${recordId}`,
-    store: storeName,
-    record_id: recordId,
-    deleted_at: now(),
-  });
 }
 
 // Deletes the entry plus its entry_tags rows (with tombstones for sync).
 export async function deleteEntry(id) {
   const db = await dbPromise;
-  const tx = db.transaction(['entries', 'entry_tags', 'sync_deletes'], 'readwrite');
+  const tx = db.transaction(['entries', 'entry_tags', 'sync_deletes', 'sync_dirty'], 'readwrite');
   const links = await tx.objectStore('entry_tags').index('entry_id').getAllKeys(id);
   for (const key of links) {
     tx.objectStore('entry_tags').delete(key);
@@ -97,7 +107,10 @@ export async function ensureTag(name, kind, author = null) {
     if (kind === 'book' && author && author.trim() && !existing.author) {
       existing.author = author.trim();
       existing.updated_at = now();
-      await db.put('tags', existing);
+      const tx = db.transaction(['tags', 'sync_dirty'], 'readwrite');
+      tx.objectStore('tags').put(existing);
+      markDirty(tx, 'tags', existing.id);
+      await tx.done;
       scheduleSync();
     }
     return existing;
@@ -110,7 +123,10 @@ export async function ensureTag(name, kind, author = null) {
     created_at: now(),
     updated_at: now(),
   };
-  await db.put('tags', tag);
+  const tx = db.transaction(['tags', 'sync_dirty'], 'readwrite');
+  tx.objectStore('tags').put(tag);
+  markDirty(tx, 'tags', tag.id);
+  await tx.done;
   scheduleSync();
   return tag;
 }
@@ -129,7 +145,7 @@ export async function tagUsageCounts() {
 // Replaces the entry's tag set with exactly tagIds (diff-based, preserves timestamps).
 export async function setEntryTags(entryId, tagIds) {
   const db = await dbPromise;
-  const tx = db.transaction(['entry_tags', 'sync_deletes'], 'readwrite');
+  const tx = db.transaction(['entry_tags', 'sync_deletes', 'sync_dirty'], 'readwrite');
   const store = tx.objectStore('entry_tags');
   const current = await store.index('entry_id').getAll(entryId);
   const wanted = new Set(tagIds);
@@ -140,13 +156,15 @@ export async function setEntryTags(entryId, tagIds) {
     } else wanted.delete(link.tag_id);
   }
   for (const tagId of wanted) {
+    const id = `${entryId}::${tagId}`;
     store.put({
-      id: `${entryId}::${tagId}`,
+      id,
       entry_id: entryId,
       tag_id: tagId,
       created_at: now(),
       updated_at: now(),
     });
+    markDirty(tx, 'entry_tags', id);
   }
   await tx.done;
   scheduleSync();

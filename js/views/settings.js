@@ -213,7 +213,11 @@ function syncSection() {
             row.disabled = true;
             try {
               const r = await syncNow();
-              toast(r.skipped ? 'Sync is not set up.' : `Synced — ${r.pushed} pushed, ${r.pulled} pulled.`);
+              // Background sync usually got there first, so a manual run with
+              // nothing to do is the normal case — say so rather than "0 and 0".
+              if (r.skipped) toast('Sync is not set up.');
+              else if (!r.pushed && !r.pulled) toast('Already up to date.');
+              else toast(`Synced — ${r.pushed} pushed, ${r.pulled} pulled.`);
             } catch (err) {
               console.error(err);
               toast(err.message || 'Sync failed — try again when online.', 3500);

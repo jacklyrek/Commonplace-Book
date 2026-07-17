@@ -54,6 +54,10 @@ One-time setup:
 1. Create a free project at supabase.com. Note the **Project URL** and the
    **anon public key** (Project Settings → API).
 2. Dashboard → SQL Editor → paste and run `supabase-schema.sql`.
+   Already had a project from an earlier version? Run
+   `supabase-migration-synced-at.sql` instead — it adds the server-stamped
+   `synced_at` column the sync now pages through. Without it every sync fails
+   with a 400.
 3. Make the sign-in email carry a code: Dashboard → Authentication →
    Email Templates → **Magic Link** — make sure the body includes
    `{{ .Token }}` (e.g. `<p>Your sign-in code: {{ .Token }}</p>`).

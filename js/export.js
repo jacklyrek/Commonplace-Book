@@ -1,7 +1,8 @@
 // Backup: JSON export/import (text records; photos are never stored) and
 // Markdown export (portable, human-readable) — §5.12, §7.
-import { dbPromise, now, cleanText } from './db.js';
+import { dbPromise, now, cleanText, markDirty } from './db.js';
 import { listEntriesFull } from './store.js';
+import { scheduleSync } from './sync.js';
 import { fmtDate } from './ui.js';
 
 const EXPORT_VERSION = 1;
@@ -57,15 +58,18 @@ export async function importJSON(file) {
     for (const record of records || []) {
       if (!record?.id) continue;
       const existing = await db.get(storeName, record.id);
-      if (!existing) {
-        await db.put(storeName, record);
-        result.added++;
-      } else if ((record.updated_at || '') > (existing.updated_at || '')) {
-        await db.put(storeName, record);
-        result.updated++;
-      } else {
+      if (existing && (record.updated_at || '') <= (existing.updated_at || '')) {
         result.skipped++;
+        continue;
       }
+      // Imported records are local changes like any other: queue them so sync
+      // pushes them, rather than leaving them to be noticed by a timestamp scan.
+      const tx = db.transaction([storeName, 'sync_dirty'], 'readwrite');
+      tx.objectStore(storeName).put(record);
+      markDirty(tx, storeName, record.id);
+      await tx.done;
+      if (existing) result.updated++;
+      else result.added++;
     }
   };
 
@@ -82,6 +86,7 @@ export async function importJSON(file) {
   await mergeStore('entry_tags', payload.entry_tags);
   // Older backups may contain an `images` array — photos are no longer stored, so it's ignored.
 
+  if (result.added || result.updated) scheduleSync();
   return result;
 }
 

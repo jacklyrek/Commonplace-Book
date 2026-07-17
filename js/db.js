@@ -12,7 +12,7 @@ export function cleanText(value) {
   return !trimmed || trimmed === 'null' || trimmed === 'undefined' ? null : value;
 }
 
-export const dbPromise = openDB('commonplace-book', 3, {
+export const dbPromise = openDB('commonplace-book', 4, {
   async upgrade(db, oldVersion, newVersion, tx) {
     if (oldVersion < 1) {
       const entries = db.createObjectStore('entries', { keyPath: 'id' });
@@ -64,8 +64,54 @@ export const dbPromise = openDB('commonplace-book', 3, {
         }
       }
     }
+
+    if (oldVersion < 4) {
+      // v4: push is driven by this outbox instead of by comparing updated_at
+      // against the sync watermark. Timestamps come from the client, so one
+      // device with a fast clock could push the watermark past every other
+      // device's clock and strand their edits indefinitely.
+      db.createObjectStore('sync_dirty', { keyPath: 'id' });
+
+      if (oldVersion >= 3) {
+        // Orphaned by the move to a server-clock watermark under a new key: it
+        // holds a client updated_at, which is meaningless there and possibly in
+        // the future. Sync re-pulls once from scratch either way.
+        tx.objectStore('meta').delete('last_sync_watermark');
+      }
+      if (oldVersion >= 1) {
+        // Re-queue every local record: on a device that was already stuck, some
+        // of these never reached the backend and nothing else would retry them.
+        const queued_at = new Date().toISOString();
+        for (const storeName of ['tags', 'entries', 'entry_tags']) {
+          for (const key of await tx.objectStore(storeName).getAllKeys()) {
+            tx.objectStore('sync_dirty').put({
+              id: `${storeName}:${key}`,
+              store: storeName,
+              record_id: key,
+              queued_at,
+            });
+          }
+        }
+      }
+    }
   },
 });
 
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
+
+// Queues a record for push. Sync sends exactly what's queued here — never a
+// scan for records whose updated_at looks new, because those timestamps come
+// from whichever device wrote them and can't be compared across clocks.
+// Records written *by* a pull are deliberately not queued: that's what stops
+// every pulled row from being echoed straight back to the server.
+// Takes the caller's transaction (which must include 'sync_dirty') so the
+// record and its queue entry commit together.
+export function markDirty(tx, storeName, recordId) {
+  tx.objectStore('sync_dirty').put({
+    id: `${storeName}:${recordId}`,
+    store: storeName,
+    record_id: recordId,
+    queued_at: now(),
+  });
+}

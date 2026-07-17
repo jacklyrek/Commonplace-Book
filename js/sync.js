@@ -6,7 +6,7 @@
 // no vendored client library — so the only network destination is your own
 // project domain. Sign-in is a one-time email code (OTP): request a code,
 // type it in, done — no OAuth redirect, works fine in a standalone PWA.
-import { dbPromise, now } from './db.js';
+import { dbPromise, now, markDirty } from './db.js';
 
 const CONFIG_KEY = 'cb-sync-config';
 const SESSION_KEY = 'cb-sync-session';
@@ -150,6 +150,22 @@ const iso = (t) => (t ? new Date(t).toISOString() : t);
 
 const pick = (record, fields) => Object.fromEntries(fields.map((f) => [f, record[f] ?? null]));
 
+// Watermarks live in the synced_at (server) clock. Renamed deliberately: any
+// value left by a build that tracked updated_at here means something else, and
+// reading it as server time could strand rows. An unknown key just re-pulls once.
+const WATERMARK_KEY = 'sync_watermarks_synced';
+
+// Postgres stamps synced_at a moment *before* the row commits, so a row can
+// become visible with a stamp we've already read past. Rewinding the filter a
+// little catches those; the LWW check makes the re-reads no-ops.
+const PULL_LAG_MS = 5000;
+
+const pullFloor = (watermark) => {
+  if (!watermark) return '';
+  const t = Date.parse(watermark);
+  return Number.isNaN(t) ? '' : new Date(t - PULL_LAG_MS).toISOString();
+};
+
 async function getMeta(key) {
   return (await (await dbPromise).get('meta', key))?.value ?? null;
 }
@@ -160,6 +176,17 @@ async function setMeta(key, value) {
 
 export async function getLastSync() {
   return getMeta('last_sync_at');
+}
+
+// Puts a record back in the push outbox. A pull that keeps the local copy over
+// the remote one has to do this: push only sends what's queued, so otherwise
+// nothing would ever resend the winner and the server would go on serving the
+// row we just rejected. The push below runs after the pull, so it goes out in
+// this same round, and once the server agrees the pull stops re-queueing it.
+async function requeue(db, storeName, recordId) {
+  const tx = db.transaction('sync_dirty', 'readwrite');
+  markDirty(tx, storeName, recordId);
+  await tx.done;
 }
 
 let inflight = null;
@@ -181,27 +208,37 @@ async function doSync() {
   if (!session) return { skipped: true };
 
   const db = await dbPromise;
-  const watermark = (await getMeta('last_sync_watermark')) || '';
-  let newWatermark = watermark;
-  const bump = (t) => {
-    if (t && t > newWatermark) newWatermark = t;
-  };
+  // One watermark per table, tracked in synced_at — server time, stamped by
+  // Postgres on arrival and never accepted from a client (see the trigger in
+  // supabase-schema.sql). updated_at cannot do this job: it says when a user
+  // touched a row, on whichever device touched it, so a device with a fast clock
+  // drags the watermark past every slower device's timestamps and their rows stop
+  // matching the filter — not late, never. The two clocks stay strictly apart:
+  // synced_at decides what to pull, updated_at decides who wins a conflict.
+  const watermarks = { ...((await getMeta(WATERMARK_KEY)) || {}) };
   let pulled = 0;
   let pushed = 0;
 
   /* ---- pull ---- */
   for (const table of TABLES) {
-    const filter = watermark ? `&updated_at=gt.${encodeURIComponent(watermark)}` : '';
-    const rows = await rest(session, 'GET', `${table}?select=*${filter}&order=updated_at.asc`);
+    const since = pullFloor(watermarks[table]);
+    // gte, not gt: two rows can share a synced_at, and gt would skip the second
+    // one forever. Re-reading rows is free — the LWW check below no-ops them.
+    const filter = since ? `&synced_at=gte.${encodeURIComponent(since)}` : '';
+    const rows = await rest(session, 'GET', `${table}?select=*${filter}&order=synced_at.asc`);
     for (const row of rows) {
       const updatedAt = iso(row.updated_at);
-      bump(updatedAt);
+      const syncedAt = iso(row.synced_at);
+      if (syncedAt && syncedAt > (watermarks[table] || '')) watermarks[table] = syncedAt;
       const local = await db.get(table, row.id);
       if (row.deleted) {
-        // Apply the tombstone unless the local copy is newer (it will re-push).
         if (local && (local.updated_at || '') <= updatedAt) {
           await db.delete(table, row.id);
           pulled++;
+        } else if (local) {
+          // Local copy wins over the tombstone, so it has to go back up or the
+          // record stays deleted on the server and the two never reconcile.
+          await requeue(db, table, row.id);
         }
         continue;
       }
@@ -212,21 +249,51 @@ async function doSync() {
         if (table === 'entries') record.starred = !!record.starred;
         await db.put(table, record);
         pulled++;
+      } else if ((local.updated_at || '') > updatedAt) {
+        // Same reason: we're keeping a newer local copy, so re-queue it rather
+        // than let the server keep serving the stale one.
+        await requeue(db, table, row.id);
       }
     }
   }
 
-  /* ---- push upserts ---- */
+  /* ---- push upserts (whatever the outbox says changed) ---- */
+  const dirty = await db.getAll('sync_dirty');
+  const queuedByTable = new Map();
+  for (const d of dirty) {
+    if (!TABLES.includes(d.store)) continue;
+    if (!queuedByTable.has(d.store)) queuedByTable.set(d.store, []);
+    queuedByTable.get(d.store).push(d);
+  }
+  const sent = [];
   for (const table of TABLES) {
-    const all = await db.getAll(table);
-    const changed = all
-      .filter((r) => (r.updated_at || '') > watermark)
-      .map((r) => pick(r, FIELDS[table]));
-    for (let i = 0; i < changed.length; i += 100) {
-      await rest(session, 'POST', `${table}?on_conflict=id`, changed.slice(i, i + 100));
+    const rows = [];
+    for (const d of queuedByTable.get(table) || []) {
+      const record = await db.get(table, d.record_id);
+      // A missing record was deleted after it was queued; its tombstone below
+      // carries the deletion, so just drop the stale queue row.
+      //
+      // deleted: false is explicit, not noise. A live record we push may already
+      // be a tombstone on the server — that's exactly what the re-queue above
+      // does when a local edit beats someone else's delete. Leaving the column
+      // out of the payload leaves the tombstone standing, so the next pull
+      // re-queues the same record and every sync re-pushes it, forever.
+      if (record) rows.push({ ...pick(record, FIELDS[table]), deleted: false });
+      sent.push(d);
     }
-    for (const r of changed) bump(r.updated_at);
-    pushed += changed.length;
+    for (let i = 0; i < rows.length; i += 100) {
+      await rest(session, 'POST', `${table}?on_conflict=id`, rows.slice(i, i + 100));
+    }
+    pushed += rows.length;
+  }
+  if (sent.length) {
+    const tx = db.transaction('sync_dirty', 'readwrite');
+    for (const d of sent) {
+      // Leave anything edited again mid-sync queued for the next round.
+      const current = await tx.store.get(d.id);
+      if (current && current.queued_at === d.queued_at) tx.store.delete(d.id);
+    }
+    await tx.done;
   }
 
   /* ---- push deletions as tombstones ---- */
@@ -241,7 +308,6 @@ async function doSync() {
     for (let i = 0; i < rows.length; i += 100) {
       await rest(session, 'POST', `${table}?on_conflict=id`, rows.slice(i, i + 100));
     }
-    for (const r of rows) bump(r.updated_at);
     pushed += rows.length;
   }
   if (deletions.length) {
@@ -250,7 +316,7 @@ async function doSync() {
     await tx.done;
   }
 
-  await setMeta('last_sync_watermark', newWatermark);
+  await setMeta(WATERMARK_KEY, watermarks);
   await setMeta('last_sync_at', now());
 
   if (pulled) window.dispatchEvent(new CustomEvent('cb-sync', { detail: { pulled, pushed } }));
