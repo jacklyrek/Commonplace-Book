@@ -19,6 +19,9 @@ const ROUTES = [
 let renderToken = 0;
 let lastRouteKey = null;
 const savedScrollPositions = new Map();
+// Only these routes remember/restore their scroll position; everything else
+// (e.g. the add-note form) always starts at the top.
+const SCROLL_RESTORE_KEYS = new Set(['library']);
 
 async function render() {
   const path = location.hash.replace(/^#\/?/, '');
@@ -33,7 +36,7 @@ async function render() {
     link.classList.toggle('active', link.dataset.route === route.tab);
   }
 
-  if (lastRouteKey && lastRouteKey !== routeKey) {
+  if (lastRouteKey && lastRouteKey !== routeKey && SCROLL_RESTORE_KEYS.has(lastRouteKey)) {
     const scrollEl = document.scrollingElement || document.documentElement;
     savedScrollPositions.set(lastRouteKey, scrollEl.scrollTop);
   }
@@ -45,10 +48,10 @@ async function render() {
   if (token !== renderToken) return; // a newer navigation superseded this one
   app.replaceChildren(...stage.childNodes);
 
-  if (!lastRouteKey) {
-    window.scrollTo(0, 0);
-  } else if (lastRouteKey !== routeKey) {
-    const savedTop = savedScrollPositions.get(routeKey);
+  if (lastRouteKey !== routeKey) {
+    const savedTop = SCROLL_RESTORE_KEYS.has(routeKey)
+      ? savedScrollPositions.get(routeKey)
+      : undefined;
     window.scrollTo(0, typeof savedTop === 'number' ? savedTop : 0);
   }
 
