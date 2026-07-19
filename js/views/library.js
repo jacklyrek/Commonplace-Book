@@ -174,40 +174,42 @@ export async function renderLibrary(container) {
     const topics = usedTags.filter((t) => t.kind === 'topic');
 
     chiprow.replaceChildren(
-      sortSel,
-      h(
-        'button',
-        {
-          class: `chip ${libraryState.star ? 'active' : ''}`,
-          onclick: () => {
-            libraryState.star = !libraryState.star;
-            renderChips();
-            renderList();
-          },
-        },
-        icon('star'),
-        'Starred'
-      ),
-      ...books.map(tagChip),
-      ...topics.map(tagChip),
-      hasFilters
-        ? h(
-            'button',
-            {
-              class: 'chip',
-              onclick: () => {
-                libraryState.q = '';
-                libraryState.star = false;
-                libraryState.tagIds.clear();
-                searchInput.value = '';
-                renderChips();
-                renderList();
-              },
+      ...[
+        sortSel,
+        h(
+          'button',
+          {
+            class: `chip ${libraryState.star ? 'active' : ''}`,
+            onclick: () => {
+              libraryState.star = !libraryState.star;
+              renderChips();
+              renderList();
             },
-            icon('x'),
-            'Clear'
-          )
-        : null
+          },
+          icon('star'),
+          'Starred'
+        ),
+        ...books.map(tagChip),
+        ...topics.map(tagChip),
+        hasFilters
+          ? h(
+              'button',
+              {
+                class: 'chip',
+                onclick: () => {
+                  libraryState.q = '';
+                  libraryState.star = false;
+                  libraryState.tagIds.clear();
+                  searchInput.value = '';
+                  renderChips();
+                  renderList();
+                },
+              },
+              icon('x'),
+              'Clear'
+            )
+          : null,
+      ].filter(Boolean)
     );
   };
 
