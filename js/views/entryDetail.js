@@ -51,7 +51,11 @@ export async function renderEntryDetail(container, entryId) {
   }
   if (entry.page) sourceBits.push(`${sourceBits.length ? ' · ' : ''}p. ${entry.page}`);
 
-  container.append(
+  // Build the sections, then drop the empty ones. `container.append` is the
+  // native DOM method, which stringifies a null argument to the text "null" —
+  // unlike `h`, which filters null children — so a note with no source/topics/
+  // reflection would otherwise render the literal word "null" in its place.
+  const sections = [
     topbar({
       title: entry.book ? entry.book.name : 'Entry',
       back: true,
@@ -98,6 +102,8 @@ export async function renderEntryDetail(container, entryId) {
       { class: 'detail-dates' },
       `Added ${fmtDate(entry.created_at)}`,
       entry.updated_at !== entry.created_at ? ` · edited ${fmtDate(entry.updated_at)}` : ''
-    )
-  );
+    ),
+  ];
+
+  container.append(...sections.filter((s) => s != null && s !== false));
 }
