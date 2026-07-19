@@ -17,11 +17,14 @@ const ROUTES = [
 ];
 
 let renderToken = 0;
+let lastRouteKey = null;
+const savedScrollPositions = new Map();
 
 async function render() {
   const path = location.hash.replace(/^#\/?/, '');
   const route = ROUTES.find((r) => r.pattern.test(path)) || ROUTES[0];
   const param = path.match(route.pattern)?.[1];
+  const routeKey = route.tab || path || 'default';
 
   // Tab bar only on top-level screens.
   const tabbar = document.getElementById('tabbar');
@@ -30,13 +33,26 @@ async function render() {
     link.classList.toggle('active', link.dataset.route === route.tab);
   }
 
+  if (lastRouteKey && lastRouteKey !== routeKey) {
+    const scrollEl = document.scrollingElement || document.documentElement;
+    savedScrollPositions.set(lastRouteKey, scrollEl.scrollTop);
+  }
+
   const app = document.getElementById('app');
   const token = ++renderToken;
   const stage = document.createElement('div');
   await route.view(stage, param ? decodeURIComponent(param) : undefined);
   if (token !== renderToken) return; // a newer navigation superseded this one
   app.replaceChildren(...stage.childNodes);
-  window.scrollTo(0, 0);
+
+  if (!lastRouteKey) {
+    window.scrollTo(0, 0);
+  } else if (lastRouteKey !== routeKey) {
+    const savedTop = savedScrollPositions.get(routeKey);
+    window.scrollTo(0, typeof savedTop === 'number' ? savedTop : 0);
+  }
+
+  lastRouteKey = routeKey;
 }
 
 function initTabIcons() {
