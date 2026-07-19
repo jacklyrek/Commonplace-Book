@@ -6,7 +6,7 @@
 // no vendored client library — so the only network destination is your own
 // project domain. Sign-in is a one-time email code (OTP): request a code,
 // type it in, done — no OAuth redirect, works fine in a standalone PWA.
-import { dbPromise, now, markDirty } from './db.js';
+import { dbPromise, now, markDirty, cleanText } from './db.js';
 
 const CONFIG_KEY = 'cb-sync-config';
 const SESSION_KEY = 'cb-sync-session';
@@ -246,7 +246,13 @@ async function doSync() {
         const record = pick(row, FIELDS[table]);
         record.created_at = iso(record.created_at);
         record.updated_at = updatedAt;
-        if (table === 'entries') record.starred = !!record.starred;
+        if (table === 'entries') {
+          record.starred = !!record.starred;
+          // Old builds could push the string "null"/"" for empty optional text;
+          // clean on the way in so it never renders literally (matches save/import).
+          record.reflection = cleanText(record.reflection);
+          record.page = cleanText(record.page);
+        }
         await db.put(table, record);
         pulled++;
       } else if ((local.updated_at || '') > updatedAt) {

@@ -12,7 +12,7 @@ export function cleanText(value) {
   return !trimmed || trimmed === 'null' || trimmed === 'undefined' ? null : value;
 }
 
-export const dbPromise = openDB('commonplace-book', 4, {
+export const dbPromise = openDB('commonplace-book', 5, {
   async upgrade(db, oldVersion, newVersion, tx) {
     if (oldVersion < 1) {
       const entries = db.createObjectStore('entries', { keyPath: 'id' });
@@ -92,6 +92,25 @@ export const dbPromise = openDB('commonplace-book', 4, {
             });
           }
         }
+      }
+    }
+
+    if (oldVersion >= 1 && oldVersion < 5) {
+      // v5: re-run the "null"/blank cleanup on existing entries. The v2 migration
+      // only reached devices upgrading from v1, and the sync pull path used to
+      // store remote "null" strings verbatim — so rows pulled from the backend
+      // could still render a literal "null". Clean them and re-queue so the fixed
+      // value also reaches the server.
+      let cursor = await tx.objectStore('entries').openCursor();
+      while (cursor) {
+        const entry = cursor.value;
+        const reflection = cleanText(entry.reflection);
+        const page = cleanText(entry.page);
+        if (reflection !== entry.reflection || page !== entry.page) {
+          await cursor.update({ ...entry, reflection, page });
+          markDirty(tx, 'entries', entry.id);
+        }
+        cursor = await cursor.continue();
       }
     }
   },
