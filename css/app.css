@@ -651,6 +651,18 @@ button.settings-row:active { background: var(--surface-2); }
   padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
 }
 
+/* Cropper.js only enlarges the bottom-right handle (.point-se); size every
+   other drag handle to match so they're all as easy to grab. */
+.cropoverlay .cropper-point {
+  width: 20px;
+  height: 20px;
+  opacity: 0.9;
+}
+.cropoverlay .cropper-point.point-n,
+.cropoverlay .cropper-point.point-s { margin-left: -10px; }
+.cropoverlay .cropper-point.point-e,
+.cropoverlay .cropper-point.point-w { margin-top: -10px; }
+
 /* Progress overlay */
 
 .progressbox { text-align: center; }
