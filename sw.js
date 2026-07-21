@@ -2,7 +2,7 @@
 // including photo→OCR capture — works fully offline (§9). Cache-first for all
 // same-origin GETs. VERSION is auto-stamped with the commit SHA at deploy time
 // (see .github/workflows/deploy.yml); the value below is just a local fallback.
-const VERSION = 'cb-v9';
+const VERSION = 'cb-v10';
 const CACHE = `commonplace-${VERSION}`;
 
 const ASSETS = [
