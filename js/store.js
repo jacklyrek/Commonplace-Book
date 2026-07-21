@@ -131,15 +131,6 @@ export async function ensureTag(name, kind, author = null) {
   return tag;
 }
 
-// Map of tag_id -> number of entries using it.
-export async function tagUsageCounts() {
-  const db = await dbPromise;
-  const links = await db.getAll('entry_tags');
-  const counts = new Map();
-  for (const link of links) counts.set(link.tag_id, (counts.get(link.tag_id) || 0) + 1);
-  return counts;
-}
-
 /* ---------------- entry_tags ---------------- */
 
 // Replaces the entry's tag set with exactly tagIds (diff-based, preserves timestamps).
@@ -208,6 +199,19 @@ export async function listEntriesFull() {
     linksByEntry.get(link.entry_id).push(link);
   }
   return entries.map((e) => attachTags(e, tagsById, linksByEntry));
+}
+
+// tag_id -> number of entries carrying it among entries that also carry
+// every tag in baseTagIds — i.e. the count you'd get by adding that tag to
+// the current selection. Omit baseTagIds for plain global usage counts.
+export function tagCounts(entries, baseTagIds = new Set()) {
+  const counts = new Map();
+  for (const entry of entries) {
+    const ids = new Set(entry.tags.map((t) => t.id));
+    if ([...baseTagIds].some((id) => !ids.has(id))) continue;
+    for (const tag of entry.tags) counts.set(tag.id, (counts.get(tag.id) || 0) + 1);
+  }
+  return counts;
 }
 
 export async function getEntryFull(id) {

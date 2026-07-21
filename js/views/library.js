@@ -1,6 +1,6 @@
 // Library (home) — §8.1: reverse-chron list, search, filter chips, sort, star
 // filter, resurface-random, floating "+".
-import { listEntriesFull, randomEntry, toggleStar, tagUsageCounts, listTags } from '../store.js';
+import { listEntriesFull, randomEntry, toggleStar, tagCounts, listTags } from '../store.js';
 import { h, icon, fmtDate, debounce, toast, topbar } from '../ui.js';
 
 // Kept across navigations so Browse can hand off a tag filter and back-nav
@@ -64,7 +64,7 @@ function applyFilters(entries) {
   return sortEntries(out, libraryState.sort);
 }
 
-function tagFilterChip(tag, counts, onToggle) {
+function tagFilterChip(tag, count, onToggle) {
   return h(
     'button',
     {
@@ -79,17 +79,19 @@ function tagFilterChip(tag, counts, onToggle) {
     },
     tag.kind === 'book' ? icon('book') : null,
     tag.name,
-    h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
+    h('span', { class: 'count' }, String(count))
   );
 }
 
 // Bottom sheet: every book/topic laid out at once (with a search box to
 // narrow a long list) so picking several tags doesn't mean scrubbing back
-// and forth across a horizontal scroller.
-function openTagSheet(allTags, counts, onChange) {
-  const usedTags = allTags.filter((t) => counts.get(t.id) || libraryState.tagIds.has(t.id));
-  const books = usedTags.filter((t) => t.kind === 'book');
-  const topics = usedTags.filter((t) => t.kind === 'topic');
+// and forth across a horizontal scroller. Each chip's count reflects entries
+// matching the selection so far *plus* that tag — how many you'd get by
+// adding it — recomputed after every toggle.
+function openTagSheet(allTags, entries, usedTagIds, onChange) {
+  const candidateTags = allTags.filter((t) => usedTagIds.has(t.id) || libraryState.tagIds.has(t.id));
+  const books = candidateTags.filter((t) => t.kind === 'book');
+  const topics = candidateTags.filter((t) => t.kind === 'topic');
   let q = '';
 
   const close = () => overlay.remove();
@@ -101,6 +103,7 @@ function openTagSheet(allTags, counts, onChange) {
   const emptyMsg = h('p', { class: 'hint' }, 'No tags match your search.');
 
   const renderSections = () => {
+    const counts = tagCounts(entries, libraryState.tagIds);
     const toggle = () => {
       renderSections();
       onChange();
@@ -108,8 +111,8 @@ function openTagSheet(allTags, counts, onChange) {
     const ql = q.trim().toLowerCase();
     const fb = books.filter((t) => !ql || t.name.toLowerCase().includes(ql));
     const ft = topics.filter((t) => !ql || t.name.toLowerCase().includes(ql));
-    bookWrap.replaceChildren(...fb.map((t) => tagFilterChip(t, counts, toggle)));
-    topicWrap.replaceChildren(...ft.map((t) => tagFilterChip(t, counts, toggle)));
+    bookWrap.replaceChildren(...fb.map((t) => tagFilterChip(t, counts.get(t.id) || 0, toggle)));
+    topicWrap.replaceChildren(...ft.map((t) => tagFilterChip(t, counts.get(t.id) || 0, toggle)));
     bookSection.hidden = fb.length === 0;
     topicSection.hidden = ft.length === 0;
     emptyMsg.hidden = fb.length + ft.length > 0;
@@ -208,11 +211,8 @@ function entryCard(entry, onStarChange) {
 }
 
 export async function renderLibrary(container) {
-  const [entries, allTags, counts] = await Promise.all([
-    listEntriesFull(),
-    listTags(),
-    tagUsageCounts(),
-  ]);
+  const [entries, allTags] = await Promise.all([listEntriesFull(), listTags()]);
+  const usedTagIds = new Set(entries.flatMap((e) => e.tags.map((t) => t.id)));
 
   // Drop stale tag filters (tag may have been orphaned by deletions).
   for (const id of [...libraryState.tagIds]) {
@@ -273,7 +273,7 @@ export async function renderLibrary(container) {
       {
         class: 'chip',
         onclick: () =>
-          openTagSheet(allTags, counts, () => {
+          openTagSheet(allTags, entries, usedTagIds, () => {
             renderChips();
             renderList();
           }),

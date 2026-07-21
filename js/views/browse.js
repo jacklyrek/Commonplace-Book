@@ -1,11 +1,11 @@
 // Browse — §8.4: books and topics; tap to select one or more, then jump to
 // the Library filtered on all of them at once.
-import { listTags, tagUsageCounts } from '../store.js';
+import { listTags, listEntriesFull, tagCounts } from '../store.js';
 import { h, icon, topbar } from '../ui.js';
 import { libraryState } from './library.js';
 
 export async function renderBrowse(container) {
-  const [tags, counts] = await Promise.all([listTags(), tagUsageCounts()]);
+  const [tags, entries] = await Promise.all([listTags(), listEntriesFull()]);
   const books = tags.filter((t) => t.kind === 'book');
   const topics = tags.filter((t) => t.kind === 'topic');
 
@@ -59,7 +59,10 @@ export async function renderBrowse(container) {
     renderBar();
   };
 
+  // Counts reflect entries matching what's already selected *plus* that tag
+  // — how many you'd get by adding it — so they narrow as you pick more.
   const renderRows = () => {
+    const counts = tagCounts(entries, selected);
     bookList.replaceChildren(
       ...books.map((tag) =>
         h(
