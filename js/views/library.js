@@ -109,13 +109,20 @@ function openTagSheet(allTags, entries, usedTagIds, onChange) {
       onChange();
     };
     const ql = q.trim().toLowerCase();
-    const fb = books.filter((t) => !ql || t.name.toLowerCase().includes(ql));
-    const ft = topics.filter((t) => !ql || t.name.toLowerCase().includes(ql));
+    // A tag with zero overlap can never narrow the result set further, so drop
+    // it from the list — unless it's already selected, so it stays reachable
+    // to deselect even if the current combination has emptied out.
+    const visible = (t) => libraryState.tagIds.has(t.id) || (counts.get(t.id) || 0) > 0;
+    const fb = books.filter((t) => visible(t) && (!ql || t.name.toLowerCase().includes(ql)));
+    const ft = topics.filter((t) => visible(t) && (!ql || t.name.toLowerCase().includes(ql)));
     bookWrap.replaceChildren(...fb.map((t) => tagFilterChip(t, counts.get(t.id) || 0, toggle)));
     topicWrap.replaceChildren(...ft.map((t) => tagFilterChip(t, counts.get(t.id) || 0, toggle)));
     bookSection.hidden = fb.length === 0;
     topicSection.hidden = ft.length === 0;
     emptyMsg.hidden = fb.length + ft.length > 0;
+    emptyMsg.textContent = ql
+      ? 'No tags match your search.'
+      : 'No other tags overlap with your selection.';
   };
 
   const searchInput = h('input', {

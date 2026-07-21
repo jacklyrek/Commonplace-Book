@@ -15,6 +15,8 @@ export async function renderBrowse(container) {
 
   const bookList = h('div', { class: 'booklist' });
   const topicGrid = h('div', { class: 'topicgrid' });
+  const bookOverlapMsg = h('p', { class: 'hint', hidden: true }, 'No books overlap with your selection.');
+  const topicOverlapMsg = h('p', { class: 'hint', hidden: true }, 'No topics overlap with your selection.');
   const bar = h('div', { class: 'selectbar' });
 
   const renderBar = () => {
@@ -60,11 +62,18 @@ export async function renderBrowse(container) {
   };
 
   // Counts reflect entries matching what's already selected *plus* that tag
-  // — how many you'd get by adding it — so they narrow as you pick more.
+  // — how many you'd get by adding it — so they narrow as you pick more. A
+  // tag with zero overlap can't narrow the result further, so it drops out
+  // of the list entirely (unless it's already selected, so it stays
+  // reachable to deselect even once the combination has emptied out).
   const renderRows = () => {
     const counts = tagCounts(entries, selected);
+    const visible = (t) => selected.has(t.id) || (counts.get(t.id) || 0) > 0;
+    const visibleBooks = books.filter(visible);
+    const visibleTopics = topics.filter(visible);
+
     bookList.replaceChildren(
-      ...books.map((tag) =>
+      ...visibleBooks.map((tag) =>
         h(
           'button',
           {
@@ -83,7 +92,7 @@ export async function renderBrowse(container) {
       )
     );
     topicGrid.replaceChildren(
-      ...topics.map((tag) =>
+      ...visibleTopics.map((tag) =>
         h(
           'button',
           { class: `chip ${selected.has(tag.id) ? 'active' : ''}`, onclick: () => toggle(tag) },
@@ -92,6 +101,8 @@ export async function renderBrowse(container) {
         )
       )
     );
+    bookOverlapMsg.hidden = !(books.length && visibleBooks.length === 0);
+    topicOverlapMsg.hidden = !(topics.length && visibleTopics.length === 0);
   };
 
   container.append(
@@ -102,7 +113,7 @@ export async function renderBrowse(container) {
       { class: 'browse-section' },
       h('h2', {}, 'Books'),
       books.length
-        ? bookList
+        ? [bookList, bookOverlapMsg]
         : h('p', { class: 'hint' }, 'No books yet — tag an entry with a book to see it here.')
     ),
     h(
@@ -110,7 +121,7 @@ export async function renderBrowse(container) {
       { class: 'browse-section' },
       h('h2', {}, 'Topics'),
       topics.length
-        ? topicGrid
+        ? [topicGrid, topicOverlapMsg]
         : h('p', { class: 'hint' }, 'No topics yet — add topic tags when saving an entry.')
     ),
     h('div', { style: 'height:70px' }),
