@@ -63,25 +63,21 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // never touch cross-origin (there should be none)
 
-  // SPA navigations always get the cached shell.
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      caches.match('./index.html').then((cached) => cached || fetch(request))
-    );
-    return;
-  }
-
+  // Always read/write the current version's cache explicitly. The global,
+  // unscoped caches.match() searches every cache still in storage (in
+  // creation order) and can hand back a stale response from an older
+  // version if one lingers, even after this version has activated.
   event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then(
-      (cached) =>
-        cached ||
-        fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-    )
+    caches.open(CACHE).then(async (cache) => {
+      if (request.mode === 'navigate') {
+        const shell = await cache.match('./index.html');
+        return shell || fetch(request);
+      }
+      const cached = await cache.match(request, { ignoreSearch: true });
+      if (cached) return cached;
+      const response = await fetch(request);
+      if (response.ok) cache.put(request, response.clone());
+      return response;
+    })
   );
 });
