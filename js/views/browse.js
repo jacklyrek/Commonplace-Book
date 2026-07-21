@@ -1,4 +1,5 @@
-// Browse — §8.4: books and topics; tapping one shows its entries in the Library.
+// Browse — §8.4: books and topics; tap to select one or more, then jump to
+// the Library filtered on all of them at once.
 import { listTags, tagUsageCounts } from '../store.js';
 import { h, icon, topbar } from '../ui.js';
 import { libraryState } from './library.js';
@@ -8,38 +9,97 @@ export async function renderBrowse(container) {
   const books = tags.filter((t) => t.kind === 'book');
   const topics = tags.filter((t) => t.kind === 'topic');
 
-  const open = (tag) => {
-    libraryState.tagIds = new Set([tag.id]);
-    libraryState.q = '';
-    libraryState.star = false;
-    location.hash = '#/';
+  // Seed from whatever's already applied in the Library so hopping between
+  // tabs doesn't lose a selection in progress.
+  const selected = new Set([...libraryState.tagIds].filter((id) => tags.some((t) => t.id === id)));
+
+  const bookList = h('div', { class: 'booklist' });
+  const topicGrid = h('div', { class: 'topicgrid' });
+  const bar = h('div', { class: 'selectbar' });
+
+  const renderBar = () => {
+    bar.hidden = selected.size === 0;
+    bar.replaceChildren(
+      h(
+        'span',
+        { class: 'selectbar-count' },
+        `${selected.size} tag${selected.size === 1 ? '' : 's'} selected`
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
+          onclick: () => {
+            selected.clear();
+            renderRows();
+            renderBar();
+          },
+        },
+        'Clear'
+      ),
+      h(
+        'button',
+        {
+          class: 'btn primary',
+          onclick: () => {
+            libraryState.tagIds = new Set(selected);
+            libraryState.q = '';
+            libraryState.star = false;
+            location.hash = '#/';
+          },
+        },
+        'Show entries'
+      )
+    );
+  };
+
+  const toggle = (tag) => {
+    selected.has(tag.id) ? selected.delete(tag.id) : selected.add(tag.id);
+    renderRows();
+    renderBar();
+  };
+
+  const renderRows = () => {
+    bookList.replaceChildren(
+      ...books.map((tag) =>
+        h(
+          'button',
+          {
+            class: `bookrow ${selected.has(tag.id) ? 'active' : ''}`,
+            onclick: () => toggle(tag),
+          },
+          icon('book'),
+          h(
+            'span',
+            { class: 'bookmain' },
+            h('strong', {}, tag.name),
+            tag.author ? h('span', {}, tag.author) : null
+          ),
+          h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
+        )
+      )
+    );
+    topicGrid.replaceChildren(
+      ...topics.map((tag) =>
+        h(
+          'button',
+          { class: `chip ${selected.has(tag.id) ? 'active' : ''}`, onclick: () => toggle(tag) },
+          tag.name,
+          h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
+        )
+      )
+    );
   };
 
   container.append(
     topbar({ title: 'Browse' }),
+    h('p', { class: 'hint' }, 'Tap to select one or more tags, then view their entries together.'),
     h(
       'section',
       { class: 'browse-section' },
       h('h2', {}, 'Books'),
       books.length
-        ? h(
-            'div',
-            { class: 'booklist' },
-            books.map((tag) =>
-              h(
-                'button',
-                { class: 'bookrow', onclick: () => open(tag) },
-                icon('book'),
-                h(
-                  'span',
-                  { class: 'bookmain' },
-                  h('strong', {}, tag.name),
-                  tag.author ? h('span', {}, tag.author) : null
-                ),
-                h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
-              )
-            )
-          )
+        ? bookList
         : h('p', { class: 'hint' }, 'No books yet — tag an entry with a book to see it here.')
     ),
     h(
@@ -47,19 +107,13 @@ export async function renderBrowse(container) {
       { class: 'browse-section' },
       h('h2', {}, 'Topics'),
       topics.length
-        ? h(
-            'div',
-            { class: 'topicgrid' },
-            topics.map((tag) =>
-              h(
-                'button',
-                { class: 'chip', onclick: () => open(tag) },
-                tag.name,
-                h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
-              )
-            )
-          )
+        ? topicGrid
         : h('p', { class: 'hint' }, 'No topics yet — add topic tags when saving an entry.')
-    )
+    ),
+    h('div', { style: 'height:70px' }),
+    bar
   );
+
+  renderRows();
+  renderBar();
 }

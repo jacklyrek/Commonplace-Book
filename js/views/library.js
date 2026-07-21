@@ -64,6 +64,104 @@ function applyFilters(entries) {
   return sortEntries(out, libraryState.sort);
 }
 
+function tagFilterChip(tag, counts, onToggle) {
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: `chip ${libraryState.tagIds.has(tag.id) ? 'active' : ''}`,
+      onclick: () => {
+        libraryState.tagIds.has(tag.id)
+          ? libraryState.tagIds.delete(tag.id)
+          : libraryState.tagIds.add(tag.id);
+        onToggle();
+      },
+    },
+    tag.kind === 'book' ? icon('book') : null,
+    tag.name,
+    h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
+  );
+}
+
+// Bottom sheet: every book/topic laid out at once (with a search box to
+// narrow a long list) so picking several tags doesn't mean scrubbing back
+// and forth across a horizontal scroller.
+function openTagSheet(allTags, counts, onChange) {
+  const usedTags = allTags.filter((t) => counts.get(t.id) || libraryState.tagIds.has(t.id));
+  const books = usedTags.filter((t) => t.kind === 'book');
+  const topics = usedTags.filter((t) => t.kind === 'topic');
+  let q = '';
+
+  const close = () => overlay.remove();
+
+  const bookWrap = h('div', { class: 'chipwrap' });
+  const topicWrap = h('div', { class: 'chipwrap' });
+  const bookSection = h('div', { class: 'sheet-section' }, h('h3', {}, 'Books'), bookWrap);
+  const topicSection = h('div', { class: 'sheet-section' }, h('h3', {}, 'Topics'), topicWrap);
+  const emptyMsg = h('p', { class: 'hint' }, 'No tags match your search.');
+
+  const renderSections = () => {
+    const toggle = () => {
+      renderSections();
+      onChange();
+    };
+    const ql = q.trim().toLowerCase();
+    const fb = books.filter((t) => !ql || t.name.toLowerCase().includes(ql));
+    const ft = topics.filter((t) => !ql || t.name.toLowerCase().includes(ql));
+    bookWrap.replaceChildren(...fb.map((t) => tagFilterChip(t, counts, toggle)));
+    topicWrap.replaceChildren(...ft.map((t) => tagFilterChip(t, counts, toggle)));
+    bookSection.hidden = fb.length === 0;
+    topicSection.hidden = ft.length === 0;
+    emptyMsg.hidden = fb.length + ft.length > 0;
+  };
+
+  const searchInput = h('input', {
+    class: 'input',
+    type: 'search',
+    placeholder: 'Search tags…',
+    oninput: (e) => {
+      q = e.target.value;
+      renderSections();
+    },
+  });
+
+  const overlay = h(
+    'div',
+    { class: 'overlay overlay-bottom', onclick: (e) => e.target === overlay && close() },
+    h(
+      'div',
+      { class: 'dialog sheet' },
+      h(
+        'div',
+        { class: 'sheet-header' },
+        h('h2', {}, 'Filter by tag'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x'))
+      ),
+      searchInput,
+      h('div', { class: 'sheet-body' }, bookSection, topicSection, emptyMsg),
+      h(
+        'div',
+        { class: 'sheet-actions' },
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: () => {
+              libraryState.tagIds.clear();
+              renderSections();
+              onChange();
+            },
+          },
+          'Clear tags'
+        ),
+        h('button', { class: 'btn primary', onclick: close }, 'Done')
+      )
+    )
+  );
+  document.getElementById('overlays').append(overlay);
+  renderSections();
+}
+
 function entryCard(entry, onStarChange) {
   const starBtn = h(
     'button',
@@ -151,27 +249,41 @@ export async function renderLibrary(container) {
     );
     sortSel.value = libraryState.sort;
 
-    const tagChip = (tag) =>
+    const activeTags = allTags.filter((t) => libraryState.tagIds.has(t.id));
+
+    const activeTagChip = (tag) =>
       h(
         'button',
         {
-          class: `chip ${libraryState.tagIds.has(tag.id) ? 'active' : ''}`,
+          class: 'chip active',
+          'aria-label': `Remove ${tag.name} filter`,
           onclick: () => {
-            libraryState.tagIds.has(tag.id)
-              ? libraryState.tagIds.delete(tag.id)
-              : libraryState.tagIds.add(tag.id);
+            libraryState.tagIds.delete(tag.id);
             renderChips();
             renderList();
           },
         },
         tag.kind === 'book' ? icon('book') : null,
         tag.name,
-        h('span', { class: 'count' }, String(counts.get(tag.id) || 0))
+        icon('x')
       );
 
-    const usedTags = allTags.filter((t) => counts.get(t.id) || libraryState.tagIds.has(t.id));
-    const books = usedTags.filter((t) => t.kind === 'book');
-    const topics = usedTags.filter((t) => t.kind === 'topic');
+    const filterBtn = h(
+      'button',
+      {
+        class: 'chip',
+        onclick: () =>
+          openTagSheet(allTags, counts, () => {
+            renderChips();
+            renderList();
+          }),
+      },
+      icon('tag'),
+      'Tags',
+      libraryState.tagIds.size
+        ? h('span', { class: 'count' }, String(libraryState.tagIds.size))
+        : null
+    );
 
     chiprow.replaceChildren(
       ...[
@@ -189,8 +301,8 @@ export async function renderLibrary(container) {
           icon('star'),
           'Starred'
         ),
-        ...books.map(tagChip),
-        ...topics.map(tagChip),
+        filterBtn,
+        ...activeTags.map(activeTagChip),
         hasFilters
           ? h(
               'button',
